@@ -8,4 +8,4 @@ One master node more added.
 
 K8s:
 https://kubernetes.io/blog/2019/03/15/kubernetes-setup-using-ansible-and-vagrant/
-That required pretty many changes due to newer software versions
+That required pretty many changes due to newer software versions and using Windows as host system.
