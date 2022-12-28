@@ -1,0 +1,1 @@
+kubeadm join 192.168.50.10:6443 --token ecippe.vf8nvcyntszx0pac --discovery-token-ca-cert-hash sha256:edcd5b151ef895d330b5dfd1cdfb92bb79d26277cfa62b406aabeb93b8086d83 
