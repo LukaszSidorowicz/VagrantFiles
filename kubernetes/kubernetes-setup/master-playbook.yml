@@ -91,6 +91,12 @@
     lineinfile:
       path: /etc/default/kubelet
       line: KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}
+      
+  - name: Ensure we have node ip on ubuntu (https://stackoverflow.com/questions/51154911/kubectl-exec-results-in-error-unable-to-upgrade-connection-pod-does-not-exi)
+    ansible.builtin.lineinfile:
+      path: /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+      insertbefore: 'EnvironmentFile='
+      line: 'KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}'
 
   - name: Delete file that is causing unknown service runtime.v1alpha2.RuntimeService
     file:
