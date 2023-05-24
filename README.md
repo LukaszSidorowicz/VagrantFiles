@@ -1,6 +1,8 @@
 # VagrantFiles
 Vagrantfiles used to make swarm and k8s clusters
 
+Instal Oracle VirtualBox, then Vagrant.
+
 Sources of oryginal Vagrant files:
 SWARM:
 https://levelup.gitconnected.com/learn-docker-swarm-with-vagrant-47dd52b57bcc
