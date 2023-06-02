@@ -1,3 +1,5 @@
+02.06.2023 modified files for kubernetes.
+
 # VagrantFiles
 Vagrantfiles used to make swarm and k8s clusters
 
