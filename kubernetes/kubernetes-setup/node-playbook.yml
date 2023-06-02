@@ -1,131 +1,221 @@
----
 - hosts: all
   become: true
-  tasks: 
-  - name: Install packages that allow apt to be used over HTTPS
-    apt:
-      name: "{{ packages }}"
-      state: present
-      update_cache: yes
-    vars:
-      packages:
-      - apt-transport-https
-      - ca-certificates
-      - curl
-      - gnupg-agent
-      - software-properties-common
+  tasks:
 
-  - name: Add an apt signing key for Docker
-    apt_key:
-      url: https://download.docker.com/linux/ubuntu/gpg
-      state: present
+    - name: Load br_netfilter kernel module
+      command: modprobe br_netfilter
 
-  - name: Add apt repository for stable version
-    apt_repository:
-      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu xenial stable
-      state: present
+    - name: Run the equivalent of "apt-get update" as a separate step
+      ansible.builtin.apt:
+        update_cache: yes
 
-  - name: Install docker and its dependecies
-    apt: 
-      name: "{{ packages }}"
-      state: present
-      update_cache: yes
-    vars:
-      packages:
-      - docker-ce 
-      - docker-ce-cli 
-      - containerd.io
-    notify:
-      - docker status
+    - name: Install packages that allow apt to be used over HTTPS
+      apt:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+      vars:
+        packages:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg-agent
+          - software-properties-common
 
-  - name: Add vagrant user to docker group
-    user:
-      name: vagrant
-      group: docker
-  - name: Remove swapfile from /etc/fstab
-    mount:
-      name: "{{ item }}"
-      fstype: swap
-      state: absent
-    with_items:
-      - swap
-      - none
+    - name: Create downloads directory
+      file:
+        path: /home/vagrant/downloads
+        state: directory
 
-  - name: Disable swap
-    command: swapoff -a
-    when: ansible_swaptotal_mb > 0
+    - name: Change to downloads directory
+      shell: cd /home/vagrant/downloads
 
-  - name: Add an apt signing key for Kubernetes
-    apt_key:
-      url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
-      state: present
+    - name: Download containerd release
+      shell: wget https://github.com/containerd/containerd/releases/download/v1.7.1/containerd-1.7.1-linux-amd64.tar.gz
 
-  - name: Adding apt repository for Kubernetes
-    apt_repository:
-      repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
-      state: present
-      filename: kubernetes.list
+    - name: Extract containerd archive
+      shell: tar Czxvf /usr/local containerd-1.7.1-linux-amd64.tar.gz
 
-  - name: Install Kubernetes binaries (https://serverfault.com/questions/1118051/failed-to-run-kubelet-validate-service-connection-cri-v1-runtime-api-is-not-im)
-    apt: 
-      name: "{{ packages }}"
-      state: present
-      update_cache: yes
-    vars:
-      packages:
-        - kubelet=1.25.5-00
-        - kubeadm 
-        - kubectl
-        
-  - name: ensure file exists
-    copy:
-      content: ""
-      dest: /etc/default/kubelet
-      force: no
-      group: sys
-      owner: root
-      mode: 0644
-      
-  - name: Configure node ip
-    lineinfile:
-      path: /etc/default/kubelet
-      line: KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}
-      
-  - name: Ensure we have node ip on ubuntu (https://stackoverflow.com/questions/51154911/kubectl-exec-results-in-error-unable-to-upgrade-connection-pod-does-not-exi)
-    ansible.builtin.lineinfile:
-      path: /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
-      insertbefore: 'EnvironmentFile='
-      line: 'KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}'
+    - name: Create systemd directory
+      file:
+        path: /usr/lib/systemd/system/
+        state: directory
 
-  - name: Delete file that is causing unknown service runtime.v1alpha2.RuntimeService
-    file:
-      path: "/etc/containerd/config.toml"
-      state: absent
+    - name: Download containerd.service file
+      shell: wget https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
 
-  - name: Restart docker
-    service:
-      name: docker
-      daemon_reload: yes
-      state: restarted
-        
-  - name: Restart containerd 
-    service:
-      name: containerd
-      daemon_reload: yes
-      state: restarted
-      
-  - name: Restart kubelet
-    service:
-      name: kubelet
-      daemon_reload: yes
-      state: restarted      
-      
-  - name: Copy the join command to server location
-    copy: src=join-command dest=/tmp/join-command.sh mode=0777
+    - name: Move containerd.service file
+      shell: mv containerd.service /usr/lib/systemd/system/
 
-  - name: Join the node to cluster
-    command: sh /tmp/join-command.sh
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start containerd service
+      service:
+        name: containerd
+        enabled: yes
+        state: started
+
+    - name: Create containerd config directory
+      file:
+        path: /etc/containerd/
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Generate containerd config
+      shell: containerd config default | sudo tee /etc/containerd/config.toml
+
+    - name: Modify containerd config
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+
+    - name: Download runc release
+      get_url:
+        url: https://github.com/opencontainers/runc/releases/download/v1.1.7/runc.amd64
+        dest: /tmp/runc.amd64
+
+    - name: Install runc
+      copy:
+        src: /tmp/runc.amd64
+        dest: /usr/local/sbin/runc
+        mode: '0755'
+
+    - name: Restart containerd after toml
+      service:
+        name: containerd
+        daemon_reload: yes
+        state: restarted
+
+    - name: Create CNI bin directory
+      file:
+        path: /opt/cni/bin/
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Download CNI plugins release
+      shell: wget https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz
+
+    - name: Extract CNI plugins
+      shell: tar Cxzvf cni-plugins-linux-amd64-v1.3.0.tgz -C /opt/cni/bin/
+      args:
+        creates: /opt/cni/bin/
+
+    - name: Restart containerd service
+      service:
+        name: containerd
+        state: restarted
+
+    - name: Remove swapfile from /etc/fstab
+      mount:
+        name: "{{ item }}"
+        fstype: swap
+        state: absent
+      with_items:
+        - swap
+        - none
+
+    - name: Disable swap
+      command: swapoff -a
+      when: ansible_swaptotal_mb > 0
+
+    - name: Add an apt signing key for Kubernetes
+      apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        state: present
+
+    - name: Adding apt repository for Kubernetes
+      apt_repository:
+        repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+        state: present
+        filename: kubernetes.list
+
+    - name: Install Kubernetes binaries
+      apt:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+      vars:
+        packages:
+          - kubelet
+          - kubeadm
+          - kubectl
+
+    - name: Ensure file exists
+      copy:
+        content: ""
+        dest: /etc/default/kubelet
+        force: no
+        group: sys
+        owner: root
+        mode: 0644
+
+    - name: Configure node IP
+      lineinfile:
+        path: /etc/default/kubelet
+        line: KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}
+
+    - name: Ensure we have node IP on Ubuntu
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+        insertbefore: 'EnvironmentFile='
+        line: 'KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}'
+
+    - name: Delete file that is causing unknown service runtime.v1alpha2.RuntimeService
+      file:
+        path: "/etc/containerd/config.toml"
+        state: absent
+
+    - name: Restart containerd
+      service:
+        name: containerd
+        daemon_reload: yes
+        state: restarted
+
+    - name: Restart kubelet
+      service:
+        name: kubelet
+        daemon_reload: yes
+        state: restarted
+
+    - name: Create bridge-nf-call-iptables file
+      become: true
+      command: touch /proc/sys/net/bridge/bridge-nf-call-iptables
+      changed_when: false
+
+    - name: Enable bridge-nf-call-iptables
+      become: true
+      command: sysctl net.bridge.bridge-nf-call-iptables=1
+      changed_when: false
+
+    - name: Enable IP forwarding
+      become: true
+      command: sysctl net.ipv4.ip_forward=1
+      changed_when: false
+
+    - name: Reload sysctl
+      become: true
+      command: sysctl --system
+      changed_when: false
+
+
+    - name: Copy the join command to server location
+      copy:
+        src: join-command
+        dest: /tmp/join-command.sh
+        mode: '0777'
+
+    - name: Join the node to the cluster
+      command: sh /tmp/join-command.sh
 
   handlers:
-    - name: docker status
-      service: name=docker state=started
+    - name: containerd status
+      service:
+        name: containerd
+        state: started
